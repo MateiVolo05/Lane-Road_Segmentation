@@ -1,0 +1,15 @@
+opencv-python
+Shapely
+xmljson
+thop
+matplotlib
+imgaug
+scipy
+p_tqdm
+lxml
+tqdm
+ujson
+PyYAML
+scikit-learn
+tensorboard
+gdown

@@ -1,0 +1,6 @@
+.venv
+LaneATT/datasets/
+LaneATT/experiments/
+LaneATT/output_images/
+__pycache__/
+*.zip

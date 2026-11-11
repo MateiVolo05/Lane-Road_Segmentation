@@ -6,13 +6,63 @@ import numpy as np
 import torch.nn as nn
 from torchvision.models import resnet18, resnet34
 
-from nms import nms
+#from nms import nms
 from lib.lane import Lane
 from lib.focal_loss import FocalLoss
 
 from .resnet import resnet122 as resnet122_cifar
 from .matching import match_proposals_with_targets
 
+# pytorch implementation of NMS (works for both cpu and CUDA with NVDIA GPU)
+def nms_pytorch(proposals, scores, overlap=45, top_k=5):
+    #filters overlapping lane proposals based on horizontal distance
+    keep = []
+    #sort proposals by confidence score in descending order
+    order = scores.argsort(descending=True)
+    #extract only the x-coordinates of the lane points
+    proposals_x = proposals[:, 5:]
+
+    #calculate start and end strip indices for each proposal
+    n_strips = proposals.shape[1] - 6
+    starts = (proposals[:, 2] * n_strips).round().long()
+    lengths = proposals[:, 4].round().long()
+    ends = torch.clamp(starts + lengths - 1, max=n_strips)
+
+    for idx in order:
+        #stop if the maximum number of top lanes is reached
+        if len(keep) >= top_k:
+            break
+
+        current_x = proposals_x[idx]
+        start_c = starts[idx].item()
+        end_c = ends[idx].item()
+        is_overlapping = False
+
+        #compare the current proposal against all previously kept lanes
+        for keep_idx in keep:
+            kept_x = proposals_x[keep_idx]
+            start_k = starts[keep_idx].item()
+            end_k = ends[keep_idx].item()
+
+            #find the common vertical segment where both lanes exist
+            start_max = max(start_c, start_k)
+            end_min = min(end_c, end_k)
+
+            #if the two lanes overlap vertically, compute their mean horizontal distance
+            if start_max <= end_min:
+                dist = torch.abs(current_x[start_max:end_min + 1] - kept_x[start_max:end_min + 1]).mean().item()
+                #lose the current proposal if it's closer than the overlap threshold
+                if dist < overlap:
+                    is_overlapping = True
+                    break
+
+        #keep the proposal if it does not overlap with any higher-scoring lane
+        if not is_overlapping:
+            keep.append(idx.item())
+
+    #return kept indices and count on the same device (CPU or GPU) as the proposals
+    keep_tensor = torch.tensor(keep, dtype=torch.long, device=proposals.device)
+    return keep_tensor, len(keep_tensor), None
 
 class LaneATT(nn.Module):
     def __init__(self,
@@ -126,7 +176,7 @@ class LaneATT(nn.Module):
                 if proposals.shape[0] == 0:
                     proposals_list.append((proposals[[]], self.anchors[[]], attention_matrix[[]], None))
                     continue
-                keep, num_to_keep, _ = nms(proposals, scores, overlap=nms_thres, top_k=nms_topk)
+                keep, num_to_keep, _ = nms_pytorch(proposals, scores, overlap=nms_thres, top_k=nms_topk)
                 keep = keep[:num_to_keep]
             proposals = proposals[keep]
             anchor_inds = anchor_inds[keep]
